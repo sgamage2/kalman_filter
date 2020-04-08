@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from filterpy.kalman import KalmanFilter
 from filterpy.common import Q_discrete_white_noise
+import kf
 
 
 def plot(x, y, xlabel=None, y_label=None, title=None, new_figure=True, **kwargs):
@@ -63,15 +64,15 @@ def create_kalman_filter(x_init, P_init, F, H, Q, R):
     M = x_init.shape[0]
     D = H.shape[0]
 
-    kf = KalmanFilter(dim_x=M, dim_z=D)
-    kf.x = x_init
-    kf.P = P_init
-    kf.F = F
-    kf.H = H
-    kf.R = R
-    kf.Q = Q
+    filter = KalmanFilter(dim_x=M, dim_z=D)
+    filter.x = x_init
+    filter.P = P_init
+    filter.F = F
+    filter.H = H
+    filter.R = R
+    filter.Q = Q
 
-    return kf
+    return filter
 
 
 if __name__ == "__main__":
@@ -96,7 +97,7 @@ if __name__ == "__main__":
     # Simple 1-D example (constant series)
     F = np.array([[1.]])  # Process state transition matrix (MxM)
     H = np.array([[1.]])  # Measurement function matrix (DxM)
-    Q = np.array([[0.005]])  # Process noise covariance matrix (MxM)
+    Q = np.array([[0.08]])  # Process noise covariance matrix (MxM)
     R = np.array([[0.1]])  # Measurement noise covariance matrix (DxD)
     x_init = np.array([[3.]])  # Initial values of state variables (mean) (Mx1)
     M = x_init.shape[0]
@@ -129,32 +130,39 @@ if __name__ == "__main__":
     z_noisy_series = generate_measurement_series(x_true_series, H, R)
     # print(z_noisy_series)
 
-    kf = create_kalman_filter(x_init, P_init, F, H, Q, R)
+    # 2 Kalman filter implementations to compare (from filterpy and my custom impl)
+    filter = create_kalman_filter(x_init, P_init, F, H, Q, R)
+    my_filter = kf.KalmanFilter(F, H, Q, R, x_init, P_init)
 
     # Pre-allocate output variables
-    kf_x = np.zeros((M, n_samples))
+    filter_x = np.zeros((M, n_samples))
+    my_filter_x = np.zeros((M, n_samples))
 
 
     # -------------------------------------------
     # Kalman filtering
 
     for i in range(n_samples):
+        # Time update (state prediction according to F, Q
+        filter.predict()
+        my_filter.predict()
+
         # Measurement update (innovation) according to observed z, H, R
         z = z_noisy_series[:, i]
-        kf.update(z)
+        filter.update(z)
+        my_filter.update(z)
 
-        # Time update (state prediction according to F, Q
-        kf.predict()
-
-        # kf.x has shape Mx1
-        kf_x[:, i] = kf.x[:, 0]
+        # filter.x has shape Mx1
+        filter_x[:, i] = filter.x[:, 0]
+        my_filter_x[:, i] = my_filter.x[:, 0]
 
     # -------------------------------------------
     # Results analysis
 
     x_var = range(n_samples)
     plot(x_var, x_true_series[0, :] , label='True state x_true_series (x_true_series)')
-    plot(x_var, kf_x[0, :], 'n', '', new_figure=False, label='Kalman predicted state (kf_x)')
+    plot(x_var, filter_x[0, :], 'n', '', new_figure=False, label='filterpy KF predicted state (kf_x)')
+    plot(x_var, my_filter_x[0, :], 'n', '', new_figure=False, label='My KF predicted state (kf_x)')
     plot(x_var, z_noisy_series[0, :],  new_figure=False, label='Noisy measurement (z_noisy_series)', linestyle='--', linewidth=1)
 
     plt.show()
