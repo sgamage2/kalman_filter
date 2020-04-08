@@ -2,7 +2,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from filterpy.kalman import KalmanFilter
+from filterpy.kalman import KalmanFilter, UnscentedKalmanFilter, MerweScaledSigmaPoints
 from filterpy.common import Q_discrete_white_noise
 import kf
 
@@ -60,7 +60,7 @@ def generate_measurement_series(x_series, H, R=None):
     return z_series
 
 
-def create_kalman_filter(x_init, P_init, F, H, Q, R):
+def create_kalman_filter(F, H, Q, R, x_init, P_init):
     M = x_init.shape[0]
     D = H.shape[0]
 
@@ -73,6 +73,28 @@ def create_kalman_filter(x_init, P_init, F, H, Q, R):
     filter.Q = Q
 
     return filter
+
+
+def create_ukf(F, H, Q, R, dt, x_init, P_init):
+    M = x_init.shape[0]
+    D = H.shape[0]
+    # alpha, beta, kappa = 1, 2, -1
+    alpha, beta, kappa = 1, 2, 1
+    points = MerweScaledSigmaPoints(M, alpha=alpha, beta=beta, kappa=kappa)
+
+    def fx(x, dt):
+        return F @ x
+
+    def hx(x):
+        return H @ x
+
+    ukf = UnscentedKalmanFilter(dim_x=M, dim_z=D, dt=dt, fx=fx, hx=hx, points=points)
+    filter.x = x_init
+    filter.P = P_init
+    filter.R = R
+    filter.Q = Q
+
+    return ukf
 
 
 if __name__ == "__main__":
@@ -103,6 +125,7 @@ if __name__ == "__main__":
     M = x_init.shape[0]
     P_init = np.array([[0.,]])  # Initial values of covariance matrix of state variables (MxM)
     x_true_init = np.array([[1.0]])
+    dt = 0.1
 
     # MATLAB Kalman filtering example - need to include u
     # F = np.array([[1.1269, -0.4940, 0.1129],
@@ -131,12 +154,14 @@ if __name__ == "__main__":
     # print(z_noisy_series)
 
     # 2 Kalman filter implementations to compare (from filterpy and my custom impl)
-    filter = create_kalman_filter(x_init, P_init, F, H, Q, R)
+    filter = create_kalman_filter(F, H, Q, R, x_init, P_init)
     my_filter = kf.KalmanFilter(F, H, Q, R, x_init, P_init)
+    ukf = create_ukf(F, H, Q, R, dt, x_init, P_init)
 
     # Pre-allocate output variables
     filter_x = np.zeros((M, n_samples))
     my_filter_x = np.zeros((M, n_samples))
+    ukf_x = np.zeros((M, n_samples))
 
 
     # -------------------------------------------
@@ -146,15 +171,18 @@ if __name__ == "__main__":
         # Time update (state prediction according to F, Q
         filter.predict()
         my_filter.predict()
+        ukf.predict()
 
         # Measurement update (innovation) according to observed z, H, R
         z = z_noisy_series[:, i]
         filter.update(z)
         my_filter.update(z)
+        ukf.update(z)
 
         # filter.x has shape Mx1
         filter_x[:, i] = filter.x[:, 0]
         my_filter_x[:, i] = my_filter.x[:, 0]
+        ukf_x[:, i] = ukf.x[:]
 
     # -------------------------------------------
     # Results analysis
@@ -164,6 +192,8 @@ if __name__ == "__main__":
     plot(x_var, filter_x[0, :], 'n', '', new_figure=False, label='filterpy KF predicted state (kf_x)')
     plot(x_var, my_filter_x[0, :], 'n', '', new_figure=False, label='My KF predicted state (kf_x)')
     plot(x_var, z_noisy_series[0, :],  new_figure=False, label='Noisy measurement (z_noisy_series)', linestyle='--', linewidth=1)
+
+    plot(x_var, ukf_x[0, :], 'n', '', new_figure=False, label='filterpy UKF predicted state (kf_x)')
 
     plt.show()
 
