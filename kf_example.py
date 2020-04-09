@@ -89,10 +89,10 @@ def create_ukf(F, H, Q, R, dt, x_init, P_init):
         return H @ x
 
     ukf = UnscentedKalmanFilter(dim_x=M, dim_z=D, dt=dt, fx=fx, hx=hx, points=points)
-    filter.x = x_init
-    filter.P = P_init
-    filter.R = R
-    filter.Q = Q
+    ukf.x = x_init
+    ukf.P = P_init
+    ukf.R = R
+    ukf.Q = Q
 
     return ukf
 
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     R = np.array([[0.1]])  # Measurement noise covariance matrix (DxD)
     x_init = np.array([[3.]])  # Initial values of state variables (mean) (Mx1)
     M = x_init.shape[0]
-    P_init = np.array([[0.,]])  # Initial values of covariance matrix of state variables (MxM)
+    P_init = np.array([[0.01,]])  # Initial values of covariance matrix of state variables (MxM)
     x_true_init = np.array([[1.0]])
     dt = 0.1
 
