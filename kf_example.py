@@ -3,61 +3,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from filterpy.kalman import KalmanFilter, UnscentedKalmanFilter, MerweScaledSigmaPoints
-from filterpy.common import Q_discrete_white_noise
 import kf
-
-
-def plot(x, y, xlabel=None, y_label=None, title=None, new_figure=True, **kwargs):
-    if new_figure:
-        plt.figure()
-        plt.title(title)
-        plt.xlabel(xlabel)
-        plt.ylabel(y_label)
-    plt.plot(x, y, **kwargs)
-    plt.legend()
-
-
-def generate_state_series(x_init, F, Q, n_samples):
-    """ Generates a series of state variables
-        # Arguments
-            x_init: Initial value of state variables (Mx1)
-            F: Process state transition matrix (MxM)
-            Q: Process noise covariance matrix (MxM)
-        # Returns
-            A numpy array (M x n_samples)
-    """
-    M = x_init.shape[0]
-    x_series = np.zeros(shape=(M, n_samples))
-    x_series[:, 0] = x_init[:, 0]
-
-    for i in range(1, n_samples):
-        x_series[:, i] = np.matmul(x_series[:, i-1], F)
-
-    return x_series
-
-
-def generate_measurement_series(x_series, H, R=None):
-    """ Generates a series of measurements for a series of state variables
-            # Arguments
-                x_series: Series of state variables (M x n_samples)
-                H: Measurement function matrix (DxM)
-                R: Measurement noise covariance matrix (DxD)
-            # Returns
-                A numpy array (D x n_samples)
-        """
-    n_samples = x_series.shape[1]
-    D = H.shape[0]
-
-    z_series = np.matmul(H, x_series)   # D x n_samples
-
-    if R is not None:
-        for dim in range(D):
-            mean = 0.
-            var = R.diagonal()[dim]
-            noise = np.random.normal(mean, var, n_samples)
-            z_series[dim, :] += noise
-
-    return z_series
+import utility
 
 
 def create_kalman_filter(F, H, Q, R, x_init, P_init):
@@ -144,18 +91,18 @@ if __name__ == "__main__":
 
     # -------------------------------------------
     # Generating data
-    x_true_series = generate_state_series(x_true_init, F, Q, n_samples) # M x n_samples
+    x_true_series = utility.generate_state_series(x_true_init, F, Q, n_samples) # M x n_samples
     print(x_true_series)
 
-    z_true_series = generate_measurement_series(x_true_series, H, R=None)
+    z_true_series = utility.generate_measurement_series(x_true_series, H, R=None)
     # print(z_true_series)
 
-    z_noisy_series = generate_measurement_series(x_true_series, H, R)
+    z_noisy_series = utility.generate_measurement_series(x_true_series, H, R)
     # print(z_noisy_series)
 
     # 2 Kalman filter implementations to compare (from filterpy and my custom impl)
     filter = create_kalman_filter(F, H, Q, R, x_init, P_init)
-    my_filter = kf.KalmanFilter(F, H, Q, R, x_init, P_init)
+    my_filter = kf.KalmanFilter(F, H, R, Q, x_init, P_init)
     ukf = create_ukf(F, H, Q, R, dt, x_init, P_init)
 
     # Pre-allocate output variables
@@ -188,12 +135,12 @@ if __name__ == "__main__":
     # Results analysis
 
     x_var = range(n_samples)
-    plot(x_var, x_true_series[0, :] , label='True state x_true_series (x_true_series)')
-    plot(x_var, filter_x[0, :], 'n', '', new_figure=False, label='filterpy KF predicted state (kf_x)')
-    plot(x_var, my_filter_x[0, :], 'n', '', new_figure=False, label='My KF predicted state (kf_x)')
-    plot(x_var, z_noisy_series[0, :],  new_figure=False, label='Noisy measurement (z_noisy_series)', linestyle='--', linewidth=1)
+    utility.plot(x_var, x_true_series[0, :], label='True state x_true_series (x_true_series)')
+    utility.plot(x_var, filter_x[0, :], 'n', '', new_figure=False, label='filterpy KF predicted state (kf_x)')
+    utility.plot(x_var, my_filter_x[0, :], 'n', '', new_figure=False, label='My KF predicted state (kf_x)')
+    utility.plot(x_var, z_noisy_series[0, :],  new_figure=False, label='Noisy measurement (z_noisy_series)', linestyle='--', linewidth=1)
 
-    plot(x_var, ukf_x[0, :], 'n', '', new_figure=False, label='filterpy UKF predicted state (kf_x)')
+    utility.plot(x_var, ukf_x[0, :], 'n', '', new_figure=False, label='filterpy UKF predicted state (kf_x)')
 
     plt.show()
 
