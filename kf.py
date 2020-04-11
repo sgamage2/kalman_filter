@@ -12,7 +12,7 @@ class KalmanFilter:
         self.x = x_init
         self.P = P_init
 
-    # Time update (state prediction according to F, Q
+    # Time update (state prediction according to F, Q)
     def predict(self):
         x = self.x
         P = self.P
