@@ -2,10 +2,25 @@ import numpy as np
 import matplotlib.pyplot as plt
 import collections
 
+# A global list to keep figures (to be saved at the end of the program)
+figures_list = []
+
+
+def add_figure_to_save(fig):
+    figures_list.append(fig)
+
+
+def save_all_figures(dir):
+    for i, fig in enumerate(figures_list):
+        filename = dir + '/fig_' + str(i) + '.png'
+        fig.savefig(filename)
+    print('All figures saved to {}'.format(dir))
+
 
 def plot(x, y, xlabel=None, y_label=None, title=None, new_figure=True, **kwargs):
     if new_figure:
-        plt.figure()
+        fig = plt.figure()
+        add_figure_to_save(fig)
         plt.title(title)
         plt.xlabel(xlabel)
         plt.ylabel(y_label)

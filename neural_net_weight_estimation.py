@@ -7,15 +7,26 @@ import ukf
 import utility
 from keras.models import Sequential
 from keras.layers import Dense, Dropout
-import math, os
+import math, os, time
 from sklearn.metrics import mean_squared_error
+from keras.callbacks import Callback
+
+
+class EpochInfoTracker(Callback):
+    def __init__(self):
+        self.weights_history = []
+
+    def on_epoch_end(self, epoch, logs=None):
+        weights_vec = get_weights_vector(self.model)
+        self.weights_history.append(weights_vec)
+
 
 class Params:
     pass
 
 
 params = Params()
-params.epochs = 3
+params.epochs = 5
 params.train_series_length = 500
 params.test_series_length = 1000
 params.mg_tau = 30
@@ -25,10 +36,11 @@ params.alpha, params.beta, params.kappa = 1, 2, 1  # Worked well
 params.alpha, params.beta, params.kappa = 0.001, 2, 1
 
 # To make training data and related variables accessible across functions
+params.train_ukf_ann = True
 params.X_data = None
 params.y_data = None
 params.hxw_model = None
-params.iter = 0
+params.curr_idx = 0
 
 
 def measurement_func(w, x):
@@ -44,16 +56,8 @@ def fw(w, dt=None):
 
 
 def hw(w):
-    k = params.iter
-    x = params.X_data[k]
-
+    x = params.X_data[params.curr_idx]
     hxw = measurement_func(w, x)
-
-    k = k + 1
-    if k == params.X_data.shape[0]:
-        k = 0
-    params.iter = k
-
     return hxw
 
 
@@ -85,56 +89,49 @@ def prepare_dataset(series, M, stride):
     return np.array(X), np.array(y)
 
 
-def test_neural_net(ann, history):
-    sample_len = params.test_series_length
+def predict_series(ann, X_data, series_length):
+    pred = ann.predict(X_data)
+    y_pred_series = np.zeros(series_length)
+    y_pred_series[window + 1:] = pred.reshape(len(pred))
 
-    test_mg_series = utility.mackey_glass(sample_len=sample_len, tau=params.mg_tau)
-    test_mg_series = np.array(test_mg_series[0]).reshape((sample_len))
-    X_test, y_test = prepare_dataset(test_mg_series, window, stride=1)
-    y_pred = ann.predict(X_test)
-    y_pred_series = np.zeros(sample_len)
-    y_pred_series[window + 1:] = y_pred.reshape(len(y_pred))
-
-    y_self_pred_series = np.zeros(sample_len)
-    y_self_pred_series[:window] = X_test[0]
-    for i in range(window, sample_len):
+    y_self_pred_series = np.zeros(series_length)
+    y_self_pred_series[:window] = X_data[0]
+    for i in range(window, series_length):
         X_window = y_self_pred_series[i - window:i]
-        y = ann.predict(X_window.reshape(1, window))   # Reshape needed
+        y = sgd_ann.predict(X_window.reshape(1, window))  # Reshape needed
         y_self_pred_series[i] = y
 
-    hist = history.history['loss']
-    utility.plot(range(len(hist)), hist, label='Training history')
+    return y_pred_series, y_self_pred_series
 
-    # utility.plot(range(sample_len), train_mg_series, label='Train series')
-    utility.plot(range(sample_len), test_mg_series, label='Test series')
-    utility.plot(range(sample_len), y_pred_series, new_figure=False,
-                 label='Predicted test series (assisted with true vals of each window)')
-    utility.plot(range(sample_len), y_self_pred_series, new_figure=False,
-                 label='Predicted test series (rolling prediction: no true vals used)')
+
+def evaluate_neural_nets(sgd_ann, ukf_ann, use_train_series=False, train_series=None):
+
+    if use_train_series:
+        X_data, y_data = params.X_data, params.y_data
+        series = train_series
+        sample_len = params.train_series_length
+    else:
+        sample_len = params.test_series_length
+        series = utility.mackey_glass(sample_len=sample_len, tau=params.mg_tau)
+        series = np.array(series[0]).reshape((sample_len))
+        X_data, y_data = prepare_dataset(series, window, stride=1)
+
+    sgd_pred, sgd_self_pred = predict_series(sgd_ann, X_data, sample_len)
+    ukf_pred, ukf_self_pred = predict_series(ukf_ann, X_data, sample_len)
+
+    utility.plot(range(sample_len), series, label='True test series')
+    utility.plot(range(sample_len), sgd_pred, new_figure=False, label='SGD ANN prediction (based on true windows)')
+    utility.plot(range(sample_len), ukf_pred, new_figure=False, label='UKF ANN prediction (based on true windows)')
+
+    # utility.plot(range(sample_len), y_self_pred_series, new_figure=False,
+    #              label='Predicted test series (rolling prediction: no true vals used)')
 
 
 def create_neural_net(M):
     ann = Sequential()
-    ann.add(Dense(math.ceil(M / 2), input_dim=M, activation='relu'))
+    ann.add(Dense(math.ceil(M / 2), input_dim=M, activation='tanh'))
     ann.add(Dense(1, ))  # output (x_k) - no activation because we don't want to limit the range of output
-    ann.compile(optimizer='adam', loss='mse')
-
-    return ann
-
-
-def train_neural_net(M):
-    sample_len = params.train_series_length
-    train_mg_series = utility.mackey_glass(sample_len=sample_len, tau=params.mg_tau)
-    train_mg_series = np.array(train_mg_series[0]).reshape((sample_len))
-    X_train, y_train = prepare_dataset(train_mg_series, M, stride=1)
-
-    ann = Sequential()
-    ann.add(Dense(math.ceil(M/2), input_dim=M, activation='relu'))
-    ann.add(Dense(1,))    # output (x_k) - no activation because we don't want to limit the range of output
-    ann.compile(optimizer='adam', loss='mse')
-    history = ann.fit(X_train, y_train, epochs=params.epochs, verbose=3)
-
-    test_neural_net(ann, history)
+    ann.compile(optimizer='sgd', loss='mse')
 
     return ann
 
@@ -177,10 +174,8 @@ if __name__ == "__main__":
 
     window = params.window_size
 
-
     dt = 0.01
     n_samples = params.train_series_length
-
 
     # -------------------------------------------
     # Generating data
@@ -195,11 +190,14 @@ if __name__ == "__main__":
     num_weights = w_init.shape[0]
 
     P_init = 0.1 * np.eye(num_weights)  # Initial values of covariance matrix of state variables (MxM)
-    Q = 0.05 * np.eye(num_weights)  # Process noise covariance matrix (MxM)
+    Q = 0.1 * np.eye(num_weights)  # Process noise covariance matrix (MxM)
     R = np.array([[0.1]])  # Measurement noise covariance matrix (DxD)
 
     sgd_ann = create_neural_net(window)
     sgd_ann.set_weights(params.hxw_model.get_weights()) # Same starting point as the UKF_ANN
+
+    ukf_ann = create_neural_net(window)
+    ukf_ann.set_weights(params.hxw_model.get_weights())  # Same starting point as the UKF_ANN
 
     z_true_series = params.y_data
     num_iter = params.epochs * len(z_true_series)
@@ -213,24 +211,31 @@ if __name__ == "__main__":
     my_ukf_w = np.zeros((num_weights, num_iter))
     ukf_train_mse = np.zeros(params.epochs)
     my_ukf_train_mse = np.zeros(params.epochs)
+    sgd_train_mse = np.zeros(params.epochs)
 
 
     # -------------------------------------------
     # Training loop with UKF
     print("Training neural net with UKF")
+    t0 = time.time()
     epoch = 0
     for i in range(num_iter):
         idx = i % len(z_true_series)
         # print(idx)
         if idx == 0:
             # Compute MSE
-            preds = params.hxw_model.predict(params.X_data)
+            if not params.train_ukf_ann:
+                break
+
+            preds = ukf_ann.predict(params.X_data)
             mse = mean_squared_error(z_true_series, preds)
             ukf_train_mse[epoch] = mse
             my_ukf_train_mse[epoch] = mse
 
             epoch += 1
             print('Epoch: {}'.format(epoch))
+
+        params.curr_idx = idx   # For use in hw() to fetch correct x_k sample
 
         # Time update (state prediction according to F, Q
         ukf_filter.predict()
@@ -241,38 +246,53 @@ if __name__ == "__main__":
         ukf_filter.update(z)
         # my_ukf.update(z)
 
+        set_weights(params.hxw_model, ukf_filter.x)
+        set_weights(ukf_ann, ukf_filter.x)
+
         # filter.x has shape Mx1
         ukf_w[:, i] = ukf_filter.x[:]
         my_ukf_w[:, i] = my_ukf.x[:]
 
+    time_to_train = time.time() - t0
+    print('Training complete. time_to_train = {:.2f} sec, {:.2f} min'.format(time_to_train, time_to_train / 60))
 
-
+    # -------------------------------------------
     # Train SGD ANN (for comparison)
     print("Training neural net with SGD")
-    history = sgd_ann.fit(params.X_data, params.y_data, batch_size=1, epochs=params.epochs)
-    hist = history.history['loss']
-    utility.plot(range(len(hist)), hist, label='SGD ANN Training history')
+    info_tracker = EpochInfoTracker()
+    callbacks = [info_tracker]
+    history = sgd_ann.fit(params.X_data, params.y_data, batch_size=1, epochs=params.epochs, verbose=2, callbacks=callbacks)
+
 
     # -------------------------------------------
     # Results analysis
 
     # Visualize evolution of 3 ANN weights
+    sgd_ann_w = np.array(info_tracker.weights_history).T
+
     x_var = range(num_iter)
-    utility.plot(x_var, ukf_w[0, :], xlabel='Iteration', label='Weight 0')
-    utility.plot(x_var, ukf_w[1, :], new_figure=False, label='Weight 1')
-    utility.plot(x_var, ukf_w[2, :], new_figure=False, label='Weight 2')
+    utility.plot(x_var, ukf_w[0, :], xlabel='Iteration', label='UKF ANN: Weight 0')
+    utility.plot(x_var, ukf_w[1, :], new_figure=False, label='UKF ANN: Weight 1')
+    utility.plot(x_var, ukf_w[2, :], new_figure=False, label='UKF ANN: Weight 2')
+    utility.plot(x_var, ukf_w[3, :], new_figure=False, label='UKF ANN: Weight 3')
+
+    x_var = range(params.epochs)
+    utility.plot(x_var, sgd_ann_w[0, :], xlabel='Epochs', label='SGD ANN: Weight 0')
+    utility.plot(x_var, sgd_ann_w[1, :], new_figure=False, label='SGD ANN: Weight 1')
+    utility.plot(x_var, sgd_ann_w[2, :], new_figure=False, label='SGD ANN: Weight 2')
+    utility.plot(x_var, sgd_ann_w[3, :], new_figure=False, label='SGD ANN: Weight 3')
 
     # Visualize evolution of true y vs. hxw(x,w)
 
-    # Visualize error curve
+    # Visualize error curve (SGD vs UKF)
     x_var = range(params.epochs)
-    utility.plot(x_var, ukf_train_mse, xlabel='Iteration', label='MSE')
+    hist = history.history['loss']
+    utility.plot(x_var, hist, xlabel='Epoch', label='SGD ANN training history (MSE)')
+    utility.plot(x_var, ukf_train_mse, new_figure=False, label='UKF ANN training history (MSE)')
 
-    # utility.plot(x_var, ukf_x[0, :], new_figure=False, label='filterpy UKF predicted state (kf_x)')
-    # # utility.plot(x_var, kf_x[0, :], new_figure=False, label='filterpy KF predicted state (kf_x)', linestyle='--')
-    # utility.plot(x_var, my_ukf_x[0, :], new_figure=False, label='My UKF predicted state (kf_x)', linestyle='--', c='purple')
-    # plt.scatter(x_var, z_true_series[0, :], label='Noisy measurement (z_noisy_series)', marker='x', c='gray', s=10, alpha=0.5)
+    # True test series vs. ANN pred vs, UKF pred
+    # evaluate_neural_nets(sgd_ann, params.hxw_model)
+    evaluate_neural_nets(sgd_ann, ukf_ann, use_train_series=True, train_series=X_series)
 
-
+    utility.save_all_figures('output')
     plt.show()
-
