@@ -43,7 +43,6 @@ def create_kalman_filter(F, H, Q, R, x_init, P_init):
 
 
 def process_func(x, dt, fx_model):
-    # assert False    # Need the 4 x 4 F matrix here
     M = len(x)
     output = np.zeros(M)
     y = fx_model.predict(x.reshape(1, M))   # Reshape needed to feed x as 1 sample to ANN model
@@ -136,9 +135,6 @@ def train_neural_net(M):
     test_neural_net(ann, history)
 
     return ann
-
-
-
 
 
 if __name__ == "__main__":
