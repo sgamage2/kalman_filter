@@ -110,16 +110,18 @@ def evaluate_neural_nets(sgd_ann, ukf_ann, use_train_series=False, train_series=
         X_data, y_data = params.X_data, params.y_data
         series = train_series
         sample_len = params.train_series_length
+        title = "Train series (true vs. predicted)"
     else:
         sample_len = params.test_series_length
         series = utility.mackey_glass(sample_len=sample_len, tau=params.mg_tau)
         series = np.array(series[0]).reshape((sample_len))
         X_data, y_data = prepare_dataset(series, window, stride=1)
+        title = "Test series (true vs. predicted)"
 
     sgd_pred, sgd_self_pred = predict_series(sgd_ann, X_data, sample_len)
     ukf_pred, ukf_self_pred = predict_series(ukf_ann, X_data, sample_len)
 
-    utility.plot(range(sample_len), series, label='True test series')
+    utility.plot(range(sample_len), series, title=title, label='True series')
     utility.plot(range(sample_len), sgd_pred, new_figure=False, label='SGD ANN prediction (based on true windows)')
     utility.plot(range(sample_len), ukf_pred, new_figure=False, label='UKF ANN prediction (based on true windows)')
 
@@ -129,8 +131,9 @@ def evaluate_neural_nets(sgd_ann, ukf_ann, use_train_series=False, train_series=
 
 def create_neural_net(M):
     ann = Sequential()
-    ann.add(Dense(math.ceil(M / 2), input_dim=M, activation='tanh'))
+    ann.add(Dense(1, input_dim=M, activation='tanh'))
     ann.add(Dense(1, ))  # output (x_k) - no activation because we don't want to limit the range of output
+    # ann.add(Dense(1, input_dim=M, activation='tanh'))  # output (x_k) - no activation because we don't want to limit the range of output
     ann.compile(optimizer='sgd', loss='mse')
 
     return ann
@@ -162,8 +165,29 @@ def set_weights(model, weights_vec):
     model.set_weights(new_weights)
 
 
+def test_weights_functions():
+    ann = create_neural_net(10)
+    prev_weights = ann.get_weights()
+    vec = get_weights_vector(ann)
+    # vec = [elem + 1 for elem in vec]
+
+    ann2 = create_neural_net(10)
+    set_weights(ann2, vec)
+    post_weights = ann2.get_weights()
+
+    for w_mat1, w_mat2 in zip(prev_weights, post_weights):
+        assert np.array_equal(w_mat1, w_mat2)
+
+    print(prev_weights)
+    print(post_weights)
+
+
+
 if __name__ == "__main__":
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1' # This line disables GPU
+
+    # test_weights_functions()
+    # assert False
 
     # -------------------------------------------
     # Setting parameters
@@ -190,8 +214,8 @@ if __name__ == "__main__":
     num_weights = w_init.shape[0]
 
     P_init = 0.1 * np.eye(num_weights)  # Initial values of covariance matrix of state variables (MxM)
-    Q = 0.1 * np.eye(num_weights)  # Process noise covariance matrix (MxM)
-    R = np.array([[0.1]])  # Measurement noise covariance matrix (DxD)
+    Q = 0.001 * np.eye(num_weights)  # Process noise covariance matrix (MxM)
+    R = np.array([[0.001]])  # Measurement noise covariance matrix (DxD)
 
     sgd_ann = create_neural_net(window)
     sgd_ann.set_weights(params.hxw_model.get_weights()) # Same starting point as the UKF_ANN
@@ -267,20 +291,18 @@ if __name__ == "__main__":
     # -------------------------------------------
     # Results analysis
 
-    # Visualize evolution of 3 ANN weights
+    # Visualize evolution of ANN weights
     sgd_ann_w = np.array(info_tracker.weights_history).T
 
     x_var = range(num_iter)
-    utility.plot(x_var, ukf_w[0, :], xlabel='Iteration', label='UKF ANN: Weight 0')
-    utility.plot(x_var, ukf_w[1, :], new_figure=False, label='UKF ANN: Weight 1')
-    utility.plot(x_var, ukf_w[2, :], new_figure=False, label='UKF ANN: Weight 2')
-    utility.plot(x_var, ukf_w[3, :], new_figure=False, label='UKF ANN: Weight 3')
+    utility.plot(x_var, ukf_w[0, :], xlabel='Iteration', title='UKF ANN weights', label='W_0', alpha=0.8)
+    for j in range(1, ukf_w.shape[0]):
+        utility.plot(x_var, ukf_w[j, :], new_figure=False, label='W_' + str(j), alpha=0.8)
 
     x_var = range(params.epochs)
-    utility.plot(x_var, sgd_ann_w[0, :], xlabel='Epochs', label='SGD ANN: Weight 0')
-    utility.plot(x_var, sgd_ann_w[1, :], new_figure=False, label='SGD ANN: Weight 1')
-    utility.plot(x_var, sgd_ann_w[2, :], new_figure=False, label='SGD ANN: Weight 2')
-    utility.plot(x_var, sgd_ann_w[3, :], new_figure=False, label='SGD ANN: Weight 3')
+    utility.plot(x_var, sgd_ann_w[0, :], xlabel='Iteration', title='SGD ANN weights', label='W_0', alpha=0.8)
+    for j in range(1, sgd_ann_w.shape[0]):
+        utility.plot(x_var, sgd_ann_w[j, :], new_figure=False, label='W_' + str(j), alpha=0.8)
 
     # Visualize evolution of true y vs. hxw(x,w)
 
@@ -291,8 +313,8 @@ if __name__ == "__main__":
     utility.plot(x_var, ukf_train_mse, new_figure=False, label='UKF ANN training history (MSE)')
 
     # True test series vs. ANN pred vs, UKF pred
-    # evaluate_neural_nets(sgd_ann, params.hxw_model)
     evaluate_neural_nets(sgd_ann, ukf_ann, use_train_series=True, train_series=X_series)
+    evaluate_neural_nets(sgd_ann, ukf_ann)
 
     utility.save_all_figures('output')
     plt.show()
