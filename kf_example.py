@@ -66,9 +66,9 @@ if __name__ == "__main__":
     # Simple 1-D example (constant series)
     F = np.array([[1.]])  # Process state transition matrix (MxM)
     H = np.array([[1.]])  # Measurement function matrix (DxM)
-    Q = np.array([[0.08]])  # Process noise covariance matrix (MxM)
-    R = np.array([[0.1]])  # Measurement noise covariance matrix (DxD)
-    x_init = np.array([[3.]])  # Initial values of state variables (mean) (Mx1)
+    Q = np.array([[0.01]])  # Process noise covariance matrix (MxM)
+    R = np.array([[0.01]])  # Measurement noise covariance matrix (DxD)
+    x_init = np.array([[1.5]])  # Initial values of state variables (mean) (Mx1)
     M = x_init.shape[0]
     P_init = np.array([[0.01,]])  # Initial values of covariance matrix of state variables (MxM)
     x_true_init = np.array([[1.0]])
@@ -136,11 +136,12 @@ if __name__ == "__main__":
 
     x_var = range(n_samples)
     utility.plot(x_var, x_true_series[0, :], label='True state x_true_series (x_true_series)')
-    utility.plot(x_var, filter_x[0, :], 'n', '', new_figure=False, label='filterpy KF predicted state (kf_x)')
     utility.plot(x_var, my_filter_x[0, :], 'n', '', new_figure=False, label='My KF predicted state (kf_x)')
-    utility.plot(x_var, z_noisy_series[0, :],  new_figure=False, label='Noisy measurement (z_noisy_series)', linestyle='--', linewidth=1)
+    utility.plot(x_var, filter_x[0, :], 'n', '', new_figure=False, label='filterpy KF predicted state (kf_x)', linestyle='--')
+    # utility.plot(x_var, z_noisy_series[0, :],  new_figure=False, label='Noisy measurement (z_noisy_series)', linestyle='--', linewidth=1)
+    plt.scatter(x_var, z_noisy_series[0, :], label='Noisy measurement (z_noisy_series)', marker='x', c='gray', s=10, alpha=0.7)
 
-    utility.plot(x_var, ukf_x[0, :], 'n', '', new_figure=False, label='filterpy UKF predicted state (kf_x)')
+    # utility.plot(x_var, ukf_x[0, :], 'n', '', new_figure=False, label='filterpy UKF predicted state (kf_x)')
 
     plt.show()
 

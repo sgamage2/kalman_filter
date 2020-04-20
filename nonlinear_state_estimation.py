@@ -16,7 +16,7 @@ class Params:
 
 
 params = Params()
-params.epochs = 1
+params.epochs = 20
 params.train_series_length = 8000
 params.test_series_length = 1000
 params.mg_tau = 30
@@ -24,7 +24,7 @@ params.filter_series_length = 500
 params.state_vector_size = 4    # M
 params.ukf_dt = 0.1
 params.alpha, params.beta, params.kappa = 1, 2, 1  # Worked well
-params.alpha, params.beta, params.kappa = 0.001, 2, 1
+# params.alpha, params.beta, params.kappa = 0.001, 2, 1
 
 
 def create_kalman_filter(F, H, Q, R, x_init, P_init):
@@ -46,14 +46,14 @@ def process_func(x, dt, fx_model):
     M = len(x)
     output = np.zeros(M)
     y = fx_model.predict(x.reshape(1, M))   # Reshape needed to feed x as 1 sample to ANN model
-    output[0] = y
-    # output[0] = x[0]  # Just for testing, set last val as current val
-    output[1:M] = x[0:M-1]  # Last M-1 points of x are set to the rest of the output
-    # print('x = {} --> output = {}'.format(x, output))
+    output[M-1] = y
+    output[0:M-1] = x[1:M]  # First M-1 points of x are set to the rest of the output
+    # print('x_in = {} --> xout = {}'.format(x, output))
     return output
 
 
 def measurement_func(x):
+    # return np.array(x[M-1]).reshape((1, 1))
     return H @ x
 
 
@@ -126,9 +126,10 @@ def train_neural_net(M):
     train_mg_series = np.array(train_mg_series[0]).reshape((sample_len))
     X_train, y_train = prepare_dataset(train_mg_series, M, stride=1)
 
+    print("Training neural network")
     ann = Sequential()
-    ann.add(Dense(math.ceil(M/2), input_dim=M, activation='relu'))
-    ann.add(Dense(1,))    # output (x_k) - no activation because we don't want to limit the range of output
+    ann.add(Dense(math.ceil(M/2), input_dim=M, activation='tanh'))
+    ann.add(Dense(1, activation='tanh'))    # output (x_k) - no activation because we don't want to limit the range of output
     ann.compile(optimizer='adam', loss='mse')
     history = ann.fit(X_train, y_train, epochs=params.epochs, verbose=3)
 
@@ -157,10 +158,10 @@ if __name__ == "__main__":
     # F = np.eye(M)  # Process state transition matrix (MxM)
     F = np.zeros((M, M))  # Process state transition matrix (MxM)
     H = np.zeros((1, M))  # Measurement function matrix (DxM)
-    H[0][0] = 1.0   # Measure x_k
+    H[0][M-1] = 1.0   # Measure x_k
     Q = 0.05 * np.eye(M)  # Process noise covariance matrix (MxM)
     R = np.array([[0.1]])  # Measurement noise covariance matrix (DxD)
-    x_init = 3 * np.ones((M))  # Initial values of state variables (mean) (M,)
+    x_init = np.zeros((M))  # Initial values of state variables (mean) (M,)
     P_init = 0.1 * np.eye(M)  # Initial values of covariance matrix of state variables (MxM)
     # x_true_init = 1.0 * np.ones((M, 1))
     dt = 0.01
@@ -179,6 +180,7 @@ if __name__ == "__main__":
 
     ann_model = train_neural_net(M)
 
+
     z_true_series = utility.generate_measurement_series(x_true_series, H, R=None)
     # print(z_true_series)
 
@@ -195,21 +197,33 @@ if __name__ == "__main__":
     ukf_x = np.zeros((M, n_samples))
     my_ukf_x = np.zeros((M, n_samples))
     ukf_x_prior = np.zeros((M, n_samples))
+    my_ukf_x_after_pred = np.zeros((M, n_samples))
+    ann_output_of_state = np.zeros((M, n_samples))
 
+    # for i in range(n_samples):
+    #     ann_output_of_state[:, i] = process_func(my_ukf.x, None, ann_model)
+    #
+    # utility.plot(range(n_samples), x_true_series[0, :], label='True state x_true_series (x_true_series)')
+    # utility.plot(range(n_samples), ann_output_of_state[0, :], new_figure=False, label='ANN prediction on state (ann_output_of_state)', linestyle='--')
+    # assert False
 
     # -------------------------------------------
     # Kalman filtering
-
+    print("Running UKF state estimation loop")
     for i in range(n_samples):
+        ann_output_of_state[:, i] = process_func(my_ukf.x, None, ann_model)
+
         # Time update (state prediction according to F, Q
         kalman_filter.predict()
-        ukf_filter.predict()
+        # ukf_filter.predict()
         my_ukf.predict()
+        my_ukf_x_after_pred[:, i] = my_ukf.x
+
 
         # Measurement update (innovation) according to observed z, H, R
         z = z_noisy_series[:, i]
         kalman_filter.update(z)
-        ukf_filter.update(z)
+        # ukf_filter.update(z)
         my_ukf.update(z)
 
         # filter.x has shape Mx1
@@ -224,14 +238,17 @@ if __name__ == "__main__":
     # ukf_x = mg_series_2
 
     x_var = range(n_samples)
-    utility.plot(x_var, x_true_series[0, :], label='True state x_true_series (x_true_series)')
-    utility.plot(x_var, ukf_x[0, :], new_figure=False, label='filterpy UKF predicted state (kf_x)')
-    # utility.plot(x_var, kf_x[0, :], new_figure=False, label='filterpy KF predicted state (kf_x)', linestyle='--')
-    utility.plot(x_var, my_ukf_x[0, :], new_figure=False, label='My UKF predicted state (kf_x)', linestyle='--', c='purple')
-    plt.scatter(x_var, z_noisy_series[0, :], label='Noisy measurement (z_noisy_series)', marker='x', c='gray', s=10, alpha=0.5)
+    utility.plot(x_var, x_true_series[M-1, :], label='True state (x_true_series)', c='red')
+    utility.plot(x_var, my_ukf_x[M-1, :], new_figure=False, label='My UKF predicted state (my_ukf_x)', c='blue', alpha=0.7)
+    # utility.plot(x_var, ukf_x[0, :], new_figure=False, label='filterpy UKF predicted state (ukf_x)', linestyle='--', c='orange', alpha=0.7)
+    utility.plot(x_var, kf_x[M-1, :], new_figure=False, label='KF predicted state (kf_x)', c='lightseagreen', alpha=0.7)
+    plt.scatter(x_var, z_noisy_series[0, :], label='Noisy measurement (z_noisy_series)', marker='x', c='gray', s=10, alpha=0.7)
 
-    utility.plot(x_var, x_true_series[0, :], label='True state x_true_series (x_true_series)')
-    utility.plot(x_var, ukf_x_prior[0, :], new_figure=False, label='UKF x_prior state (no measurement update) (ukf_x_prior)')
+    utility.plot(x_var, x_true_series[0, :], label='True state x_true_series (x_true_series)', c='red')
+    # utility.plot(x_var, my_ukf_x_after_pred[0, :], new_figure=False, label='My UKF x_after_pred (no measurement update) (ukf_x_prior)')
+    utility.plot(x_var, ann_output_of_state[0, :], new_figure=False, label='ANN prediction on state (ann_output_of_state)', linestyle='--')
+    # utility.plot(x_var, ukf_x_prior[0, :], new_figure=False, label='UKF x_prior state (no measurement update) (ukf_x_prior)')
 
+    utility.save_all_figures('output')
     plt.show()
 

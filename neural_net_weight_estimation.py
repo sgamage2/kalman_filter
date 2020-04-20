@@ -26,14 +26,14 @@ class Params:
 
 
 params = Params()
-params.epochs = 5
+params.epochs = 10
 params.train_series_length = 500
 params.test_series_length = 1000
 params.mg_tau = 30
 params.window_size = 4    # M
 params.ukf_dt = 0.1
 params.alpha, params.beta, params.kappa = 1, 2, 1  # Worked well
-params.alpha, params.beta, params.kappa = 0.001, 2, 1
+# params.alpha, params.beta, params.kappa = 0.001, 2, 1
 
 # To make training data and related variables accessible across functions
 params.train_ukf_ann = True
@@ -131,7 +131,7 @@ def evaluate_neural_nets(sgd_ann, ukf_ann, use_train_series=False, train_series=
 
 def create_neural_net(M):
     ann = Sequential()
-    ann.add(Dense(1, input_dim=M, activation='tanh'))
+    ann.add(Dense(2, input_dim=M, activation='tanh'))
     ann.add(Dense(1, ))  # output (x_k) - no activation because we don't want to limit the range of output
     # ann.add(Dense(1, input_dim=M, activation='tanh'))  # output (x_k) - no activation because we don't want to limit the range of output
     ann.compile(optimizer='sgd', loss='mse')
@@ -231,8 +231,8 @@ if __name__ == "__main__":
     my_ukf = create_my_ukf(Q, R, dt, w_init, P_init)
 
     # Pre-allocate output variables
-    ukf_w = np.zeros((num_weights, num_iter))
-    my_ukf_w = np.zeros((num_weights, num_iter))
+    ukf_w = np.zeros((num_weights, params.epochs))
+    my_ukf_w = np.zeros((num_weights, params.epochs))
     ukf_train_mse = np.zeros(params.epochs)
     my_ukf_train_mse = np.zeros(params.epochs)
     sgd_train_mse = np.zeros(params.epochs)
@@ -240,14 +240,15 @@ if __name__ == "__main__":
 
     # -------------------------------------------
     # Training loop with UKF
+
     print("Training neural net with UKF")
     t0 = time.time()
     epoch = 0
+
     for i in range(num_iter):
         idx = i % len(z_true_series)
         # print(idx)
         if idx == 0:
-            # Compute MSE
             if not params.train_ukf_ann:
                 break
 
@@ -256,36 +257,40 @@ if __name__ == "__main__":
             ukf_train_mse[epoch] = mse
             my_ukf_train_mse[epoch] = mse
 
+            ukf_w[:, epoch] = ukf_filter.x[:]
+            my_ukf_w[:, epoch] = my_ukf.x[:]
+
             epoch += 1
-            print('Epoch: {}'.format(epoch))
+            print('Epoch: {} / {}'.format(epoch, params.epochs))
 
         params.curr_idx = idx   # For use in hw() to fetch correct x_k sample
 
         # Time update (state prediction according to F, Q
-        ukf_filter.predict()
-        # my_ukf.predict()
+        # ukf_filter.predict()
+        my_ukf.predict()
 
         # Measurement update (innovation) according to observed z, H, R
         z = z_true_series[idx]
-        ukf_filter.update(z)
-        # my_ukf.update(z)
+        # ukf_filter.update(z)
+        my_ukf.update(z)
 
-        set_weights(params.hxw_model, ukf_filter.x)
-        set_weights(ukf_ann, ukf_filter.x)
+        set_weights(params.hxw_model, my_ukf.x)
+        set_weights(ukf_ann, my_ukf.x)
 
         # filter.x has shape Mx1
-        ukf_w[:, i] = ukf_filter.x[:]
-        my_ukf_w[:, i] = my_ukf.x[:]
+        # ukf_w[:, i] = ukf_filter.x[:]
+        # my_ukf_w[:, i] = my_ukf.x[:]
 
     time_to_train = time.time() - t0
     print('Training complete. time_to_train = {:.2f} sec, {:.2f} min'.format(time_to_train, time_to_train / 60))
+
 
     # -------------------------------------------
     # Train SGD ANN (for comparison)
     print("Training neural net with SGD")
     info_tracker = EpochInfoTracker()
     callbacks = [info_tracker]
-    history = sgd_ann.fit(params.X_data, params.y_data, batch_size=1, epochs=params.epochs, verbose=2, callbacks=callbacks)
+    history = sgd_ann.fit(params.X_data, params.y_data, batch_size=1, epochs=params.epochs, verbose=3, callbacks=callbacks)
 
 
     # -------------------------------------------
@@ -294,13 +299,13 @@ if __name__ == "__main__":
     # Visualize evolution of ANN weights
     sgd_ann_w = np.array(info_tracker.weights_history).T
 
-    x_var = range(num_iter)
-    utility.plot(x_var, ukf_w[0, :], xlabel='Iteration', title='UKF ANN weights', label='W_0', alpha=0.8)
-    for j in range(1, ukf_w.shape[0]):
-        utility.plot(x_var, ukf_w[j, :], new_figure=False, label='W_' + str(j), alpha=0.8)
+    x_var = range(params.epochs)
+    utility.plot(x_var, my_ukf_w[0, :], xlabel='Epoch', title='UKF ANN weights', label='W_0', alpha=0.8)
+    for j in range(1, my_ukf_w.shape[0]):
+        utility.plot(x_var, my_ukf_w[j, :], new_figure=False, label='W_' + str(j), alpha=0.8)
 
     x_var = range(params.epochs)
-    utility.plot(x_var, sgd_ann_w[0, :], xlabel='Iteration', title='SGD ANN weights', label='W_0', alpha=0.8)
+    utility.plot(x_var, sgd_ann_w[0, :], xlabel='Epoch', title='SGD ANN weights', label='W_0', alpha=0.8)
     for j in range(1, sgd_ann_w.shape[0]):
         utility.plot(x_var, sgd_ann_w[j, :], new_figure=False, label='W_' + str(j), alpha=0.8)
 

@@ -19,7 +19,7 @@ class UnscentedKalmanFilter:
         self.beta = beta
         self.kapa = kapa
 
-    # Time update (state prediction according to fx, Q)
+    # Time state prediction (state prediction according to fx, Q)
     def predict(self):
         Wm = self.Wm
         Wc = self.Wc

@@ -12,7 +12,7 @@ class KalmanFilter:
         self.x = x_init
         self.P = P_init
 
-    # Time update (state prediction according to F, Q)
+    # Time state prediction (state prediction according to F, Q)
     def predict(self):
         x = self.x
         P = self.P
@@ -42,7 +42,7 @@ class KalmanFilter:
         # P = P - KHP = (I-KH)P
         self.P = P - K @ H @ P
 
-        # Alternative: P = (I-KH)P(I-KH)' + KRK'
+        # Alternative (more numerically stable): P = (I-KH)P(I-KH)' + KRK'
         # I = np.eye(P.shape[0])
         # I_KH = (I - K @ H)
         # self.P = I_KH @ P @ I_KH.T + K @ R @ K.T
