@@ -89,23 +89,7 @@ def prepare_dataset(series, M, stride):
     return np.array(X), np.array(y)
 
 
-def predict_series(ann, X_data, series_length):
-    pred = ann.predict(X_data)
-    y_pred_series = np.zeros(series_length)
-    y_pred_series[window + 1:] = pred.reshape(len(pred))
-
-    y_self_pred_series = np.zeros(series_length)
-    y_self_pred_series[:window] = X_data[0]
-    for i in range(window, series_length):
-        X_window = y_self_pred_series[i - window:i]
-        y = sgd_ann.predict(X_window.reshape(1, window))  # Reshape needed
-        y_self_pred_series[i] = y
-
-    return y_pred_series, y_self_pred_series
-
-
-def evaluate_neural_nets(sgd_ann, ukf_ann, use_train_series=False, train_series=None):
-
+def evaluate_neural_nets(sgd_ann, ukf_ann, window, use_train_series=False, train_series=None):
     if use_train_series:
         X_data, y_data = params.X_data, params.y_data
         series = train_series
@@ -118,8 +102,8 @@ def evaluate_neural_nets(sgd_ann, ukf_ann, use_train_series=False, train_series=
         X_data, y_data = prepare_dataset(series, window, stride=1)
         title = "Test series (true vs. predicted)"
 
-    sgd_pred, sgd_self_pred = predict_series(sgd_ann, X_data, sample_len)
-    ukf_pred, ukf_self_pred = predict_series(ukf_ann, X_data, sample_len)
+    sgd_pred, sgd_self_pred = utility.predict_series(sgd_ann, X_data, sample_len, window)
+    ukf_pred, ukf_self_pred = utility.predict_series(ukf_ann, X_data, sample_len, window)
 
     utility.plot(range(sample_len), series, title=title, label='True series')
     utility.plot(range(sample_len), sgd_pred, new_figure=False, label='SGD ANN prediction (based on true windows)')
@@ -182,10 +166,7 @@ def test_weights_functions():
     print(post_weights)
 
 
-
-if __name__ == "__main__":
-    os.environ['CUDA_VISIBLE_DEVICES'] = '-1' # This line disables GPU
-
+def main():
     # test_weights_functions()
     # assert False
 
@@ -218,7 +199,7 @@ if __name__ == "__main__":
     R = np.array([[0.001]])  # Measurement noise covariance matrix (DxD)
 
     sgd_ann = create_neural_net(window)
-    sgd_ann.set_weights(params.hxw_model.get_weights()) # Same starting point as the UKF_ANN
+    sgd_ann.set_weights(params.hxw_model.get_weights())  # Same starting point as the UKF_ANN
 
     ukf_ann = create_neural_net(window)
     ukf_ann.set_weights(params.hxw_model.get_weights())  # Same starting point as the UKF_ANN
@@ -236,7 +217,6 @@ if __name__ == "__main__":
     ukf_train_mse = np.zeros(params.epochs)
     my_ukf_train_mse = np.zeros(params.epochs)
     sgd_train_mse = np.zeros(params.epochs)
-
 
     # -------------------------------------------
     # Training loop with UKF
@@ -263,7 +243,7 @@ if __name__ == "__main__":
             epoch += 1
             print('Epoch: {} / {}'.format(epoch, params.epochs))
 
-        params.curr_idx = idx   # For use in hw() to fetch correct x_k sample
+        params.curr_idx = idx  # For use in hw() to fetch correct x_k sample
 
         # Time update (state prediction according to F, Q
         # ukf_filter.predict()
@@ -284,14 +264,13 @@ if __name__ == "__main__":
     time_to_train = time.time() - t0
     print('Training complete. time_to_train = {:.2f} sec, {:.2f} min'.format(time_to_train, time_to_train / 60))
 
-
     # -------------------------------------------
     # Train SGD ANN (for comparison)
     print("Training neural net with SGD")
     info_tracker = EpochInfoTracker()
     callbacks = [info_tracker]
-    history = sgd_ann.fit(params.X_data, params.y_data, batch_size=1, epochs=params.epochs, verbose=3, callbacks=callbacks)
-
+    history = sgd_ann.fit(params.X_data, params.y_data, batch_size=1, epochs=params.epochs, verbose=3,
+                          callbacks=callbacks)
 
     # -------------------------------------------
     # Results analysis
@@ -318,8 +297,14 @@ if __name__ == "__main__":
     utility.plot(x_var, ukf_train_mse, new_figure=False, label='UKF ANN training history (MSE)')
 
     # True test series vs. ANN pred vs, UKF pred
-    evaluate_neural_nets(sgd_ann, ukf_ann, use_train_series=True, train_series=X_series)
-    evaluate_neural_nets(sgd_ann, ukf_ann)
+    evaluate_neural_nets(sgd_ann, ukf_ann, window, use_train_series=True, train_series=X_series)
+    evaluate_neural_nets(sgd_ann, ukf_ann, window)
 
     utility.save_all_figures('output')
     plt.show()
+
+
+if __name__ == "__main__":
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1' # This line disables GPU
+    main()
+

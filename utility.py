@@ -87,7 +87,7 @@ def generate_state_series(x_init, F, Q, n_samples):
     return x_series
 
 
-def generate_measurement_series(x_series, H, R=None):
+def generate_measurement_series(x_series, H, R=None, noise_type='gaussian'):
     """ Generates a series of measurements for a series of state variables
             # Arguments
                 x_series: Series of state variables (M x n_samples)
@@ -105,7 +105,30 @@ def generate_measurement_series(x_series, H, R=None):
         for dim in range(D):
             mean = 0.
             var = R.diagonal()[dim]
-            noise = np.random.normal(mean, var, n_samples)
+
+            if noise_type == 'gaussian':
+                noise = np.random.normal(mean, var, n_samples)
+            elif noise_type == 'uniform':
+                a = (3 * var) ** 0.5     # variance = a^2 / 3 for uniform~(-a, +a)
+                noise = np.random.uniform(low=-a, high=a, size=n_samples)
+            else:
+                assert False
+
             z_series[dim, :] += noise
 
     return z_series
+
+
+def predict_series(ann, X_data, series_length, window):
+    pred = ann.predict(X_data)
+    y_pred_series = np.zeros(series_length)
+    y_pred_series[window + 1:] = pred.reshape(len(pred))
+
+    y_self_pred_series = np.zeros(series_length)
+    y_self_pred_series[:window] = X_data[0]
+    for i in range(window, series_length):
+        X_window = y_self_pred_series[i - window:i]
+        y = ann.predict(X_window.reshape(1, window))  # Reshape needed
+        y_self_pred_series[i] = y
+
+    return y_pred_series, y_self_pred_series

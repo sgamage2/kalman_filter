@@ -25,6 +25,9 @@ params.state_vector_size = 4    # M
 params.ukf_dt = 0.1
 params.alpha, params.beta, params.kappa = 1, 2, 1  # Worked well
 # params.alpha, params.beta, params.kappa = 0.001, 2, 1
+params.measurement_noise = 'gaussian'   # gaussian, uniform
+params.Q_var = 0.05
+params.R_var = 0.05
 
 
 def create_kalman_filter(F, H, Q, R, x_init, P_init):
@@ -52,7 +55,7 @@ def process_func(x, dt, fx_model):
     return output
 
 
-def measurement_func(x):
+def measurement_func(x, H):
     # return np.array(x[M-1]).reshape((1, 1))
     return H @ x
 
@@ -66,7 +69,10 @@ def create_ukf(fx_model, H, Q, R, dt, x_init, P_init):
     def fx(x, dt):
         return process_func(x, dt, fx_model)
 
-    ukf = UnscentedKalmanFilter(dim_x=M, dim_z=D, dt=dt, fx=fx, hx=measurement_func, points=points)
+    def hx(x):
+        return measurement_func(x, H)
+
+    ukf = UnscentedKalmanFilter(dim_x=M, dim_z=D, dt=dt, fx=fx, hx=hx, points=points)
     ukf.x = x_init
     ukf.P = P_init
     ukf.R = R
@@ -79,7 +85,10 @@ def create_my_ukf(fx_model, H, Q, R, dt, x_init, P_init):
     def fx(x, dt=None):
         return process_func(x, dt, fx_model)
 
-    my_ukf = ukf.UnscentedKalmanFilter(fx, measurement_func, R, Q, x_init, P_init, params.alpha, params.beta, params.kappa)
+    def hx(x):
+        return measurement_func(x, H)
+
+    my_ukf = ukf.UnscentedKalmanFilter(fx, hx, R, Q, x_init, P_init, params.alpha, params.beta, params.kappa)
     return my_ukf
 
 
@@ -94,20 +103,12 @@ def prepare_dataset(series, M, stride):
 
 def test_neural_net(ann, history):
     sample_len = params.test_series_length
+    M = params.state_vector_size
 
     test_mg_series = utility.mackey_glass(sample_len=sample_len, tau=params.mg_tau)
     test_mg_series = np.array(test_mg_series[0]).reshape((sample_len))
     X_test, y_test = prepare_dataset(test_mg_series, M, stride=1)
-    y_pred = ann.predict(X_test)
-    y_pred_series = np.zeros(sample_len)
-    y_pred_series[M+1 :] = y_pred.reshape(len(y_pred))
-
-    y_self_pred_series = np.zeros(sample_len)
-    y_self_pred_series[:M] = X_test[0]
-    for i in range(M, sample_len):
-        X_window = y_self_pred_series[i-M:i]
-        y = ann.predict(X_window.reshape(1, M))   # Reshape needed
-        y_self_pred_series[i] = y
+    y_pred_series, y_self_pred_series = utility.predict_series(ann, X_test, sample_len, M)
 
     hist = history.history['loss']
     utility.plot(range(len(hist)), hist, label='Training history')
@@ -116,8 +117,8 @@ def test_neural_net(ann, history):
     utility.plot(range(sample_len), test_mg_series, label='Test series')
     utility.plot(range(sample_len), y_pred_series, new_figure=False,
                  label='Predicted test series (assisted with true vals of each window)')
-    utility.plot(range(sample_len), y_self_pred_series, new_figure=False,
-                 label='Predicted test series (rolling prediction: no true vals used)')
+    # utility.plot(range(sample_len), y_self_pred_series, new_figure=False,
+    #              label='Predicted test series (rolling prediction: no true vals used)')
 
 
 def train_neural_net(M):
@@ -138,12 +139,7 @@ def train_neural_net(M):
     return ann
 
 
-if __name__ == "__main__":
-    os.environ['CUDA_VISIBLE_DEVICES'] = '-1' # This line disables GPU
-
-    # -------------------------------------------
-    # Test my UKF
-
+def main():
 
     # -------------------------------------------
     # Setting parameters
@@ -159,8 +155,8 @@ if __name__ == "__main__":
     F = np.zeros((M, M))  # Process state transition matrix (MxM)
     H = np.zeros((1, M))  # Measurement function matrix (DxM)
     H[0][M-1] = 1.0   # Measure x_k
-    Q = 0.05 * np.eye(M)  # Process noise covariance matrix (MxM)
-    R = np.array([[0.1]])  # Measurement noise covariance matrix (DxD)
+    Q = params.Q_var * np.eye(M)  # Process noise covariance matrix (MxM)
+    R = np.array([[params.R_var]])  # Measurement noise covariance matrix (DxD)
     x_init = np.zeros((M))  # Initial values of state variables (mean) (M,)
     P_init = 0.1 * np.eye(M)  # Initial values of covariance matrix of state variables (MxM)
     # x_true_init = 1.0 * np.ones((M, 1))
@@ -170,9 +166,13 @@ if __name__ == "__main__":
 
     # -------------------------------------------
     # Generating data
-    mg_series = utility.mackey_glass(sample_len=n_samples, tau=params.mg_tau, n_samples=M)
-    mg_series = np.array(mg_series).reshape((M, n_samples))
-    x_true_series = mg_series
+
+    # True series: only the last (M-1)th state contains the true series
+    # True series is only used to generate a noisy observation series and for plotting later
+    mg_series = utility.mackey_glass(sample_len=n_samples, tau=params.mg_tau)
+    x_true_series = np.zeros(shape=(M, n_samples))
+    x_true_series[M-1] = mg_series[0].reshape(n_samples)
+
     # assert False    # how does the state variables become the past M-sized-window?
 
     # mg_series_2 = data.mackey_glass(tau=params.mg_tau, sample=0.46, length=n_samples)
@@ -181,10 +181,10 @@ if __name__ == "__main__":
     ann_model = train_neural_net(M)
 
 
-    z_true_series = utility.generate_measurement_series(x_true_series, H, R=None)
+    # z_true_series = utility.generate_measurement_series(x_true_series, H, R=None)
     # print(z_true_series)
 
-    z_noisy_series = utility.generate_measurement_series(x_true_series, H, R)
+    z_noisy_series = utility.generate_measurement_series(x_true_series, H, R, noise_type=params.measurement_noise)
     # print(z_noisy_series)
 
     # 2 Kalman filter implementations to compare (from filterpy and my custom impl)
@@ -200,12 +200,12 @@ if __name__ == "__main__":
     my_ukf_x_after_pred = np.zeros((M, n_samples))
     ann_output_of_state = np.zeros((M, n_samples))
 
-    # for i in range(n_samples):
-    #     ann_output_of_state[:, i] = process_func(my_ukf.x, None, ann_model)
-    #
-    # utility.plot(range(n_samples), x_true_series[0, :], label='True state x_true_series (x_true_series)')
-    # utility.plot(range(n_samples), ann_output_of_state[0, :], new_figure=False, label='ANN prediction on state (ann_output_of_state)', linestyle='--')
-    # assert False
+    # Predict on true state series and noisy observation series with ANN
+    X_test, y_test = prepare_dataset(x_true_series[M-1], M, stride=1)
+    y_pred_series, y_self_pred_series = utility.predict_series(ann_model, X_test, n_samples, M)
+
+    X_test, y_test = prepare_dataset(z_noisy_series[0], M, stride=1)
+    y_noisy_pred_series, y_self_noisy_pred_series = utility.predict_series(ann_model, X_test, n_samples, M)
 
     # -------------------------------------------
     # Kalman filtering
@@ -244,11 +244,16 @@ if __name__ == "__main__":
     utility.plot(x_var, kf_x[M-1, :], new_figure=False, label='KF predicted state (kf_x)', c='lightseagreen', alpha=0.7)
     plt.scatter(x_var, z_noisy_series[0, :], label='Noisy measurement (z_noisy_series)', marker='x', c='gray', s=10, alpha=0.7)
 
-    utility.plot(x_var, x_true_series[0, :], label='True state x_true_series (x_true_series)', c='red')
+    utility.plot(x_var, x_true_series[M-1, :], label='True state x_true_series (x_true_series)', c='red')
     # utility.plot(x_var, my_ukf_x_after_pred[0, :], new_figure=False, label='My UKF x_after_pred (no measurement update) (ukf_x_prior)')
-    utility.plot(x_var, ann_output_of_state[0, :], new_figure=False, label='ANN prediction on state (ann_output_of_state)', linestyle='--')
-    # utility.plot(x_var, ukf_x_prior[0, :], new_figure=False, label='UKF x_prior state (no measurement update) (ukf_x_prior)')
+    utility.plot(x_var, ann_output_of_state[M-1, :], new_figure=False, label='KF state before measurement update (ANN prediction on prev state)')
+    utility.plot(x_var, y_pred_series, new_figure=False, label='ANN prediction on true series (y_pred_series)')
+    utility.plot(x_var, y_noisy_pred_series, new_figure=False, label='ANN prediction on noisy observations (y_pred_series)', linestyle='--')
 
     utility.save_all_figures('output')
     plt.show()
 
+
+if __name__ == "__main__":
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1' # This line disables GPU
+    main()
