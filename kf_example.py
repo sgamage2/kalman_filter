@@ -135,11 +135,11 @@ if __name__ == "__main__":
     # Results analysis
 
     x_var = range(n_samples)
-    utility.plot(x_var, x_true_series[0, :], label='True state x_true_series (x_true_series)')
-    utility.plot(x_var, my_filter_x[0, :], 'n', '', new_figure=False, label='My KF predicted state (kf_x)')
-    utility.plot(x_var, filter_x[0, :], 'n', '', new_figure=False, label='filterpy KF predicted state (kf_x)', linestyle='--')
+    utility.plot(x_var, x_true_series[0, :], label='True state')
+    plt.scatter(x_var, z_noisy_series[0, :], label='Noisy measurement', marker='x', c='gray', s=10, alpha=0.7)
+    utility.plot(x_var, my_filter_x[0, :], 'n', '', new_figure=False, label='My KF predicted state', marker='o', markersize=4)
+    utility.plot(x_var, filter_x[0, :], 'n', '', new_figure=False, label='filterpy KF predicted state', linestyle='--')
     # utility.plot(x_var, z_noisy_series[0, :],  new_figure=False, label='Noisy measurement (z_noisy_series)', linestyle='--', linewidth=1)
-    plt.scatter(x_var, z_noisy_series[0, :], label='Noisy measurement (z_noisy_series)', marker='x', c='gray', s=10, alpha=0.7)
 
     # utility.plot(x_var, ukf_x[0, :], 'n', '', new_figure=False, label='filterpy UKF predicted state (kf_x)')
 

@@ -3,12 +3,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from filterpy.kalman import KalmanFilter, UnscentedKalmanFilter, MerweScaledSigmaPoints, unscented_transform
-from nolitsa import data
 import ukf
 import utility
 from keras.models import Sequential
 from keras.layers import Dense, Dropout
 import math, os
+from sklearn.metrics import mean_squared_error
 
 
 class Params:
@@ -16,19 +16,18 @@ class Params:
 
 
 params = Params()
-params.epochs = 20
-params.train_series_length = 8000
+params.epochs = 30
+params.train_series_length = 20000
 params.test_series_length = 1000
 params.mg_tau = 30
 params.filter_series_length = 500
-params.state_vector_size = 4    # M
+params.state_vector_size = 64    # M
 params.ukf_dt = 0.1
 params.alpha, params.beta, params.kappa = 1, 2, 1  # Worked well
 # params.alpha, params.beta, params.kappa = 0.001, 2, 1
 params.measurement_noise = 'gaussian'   # gaussian, uniform
 params.Q_var = 0.05
 params.R_var = 0.05
-
 
 def create_kalman_filter(F, H, Q, R, x_init, P_init):
     M = x_init.shape[0]
@@ -92,12 +91,15 @@ def create_my_ukf(fx_model, H, Q, R, dt, x_init, P_init):
     return my_ukf
 
 
-def prepare_dataset(series, M, stride):
+def prepare_dataset(series, M, stride, y_series=None):
+    if y_series is None:
+        y_series = series
+
     X, y = [], []
     for i in range(0, len(series) - M - 1, stride):
         window = series[i:(i + M)]  #
         X.append(window)
-        y.append(series[i + M])
+        y.append(y_series[i + M])
     return np.array(X), np.array(y)
 
 
@@ -107,6 +109,12 @@ def test_neural_net(ann, history):
 
     test_mg_series = utility.mackey_glass(sample_len=sample_len, tau=params.mg_tau)
     test_mg_series = np.array(test_mg_series[0]).reshape((sample_len))
+
+    orig_series = test_mg_series
+
+    noise = utility.get_noise_series(params.measurement_noise, 0, params.R_var, len(test_mg_series))
+    test_mg_series = test_mg_series + noise
+
     X_test, y_test = prepare_dataset(test_mg_series, M, stride=1)
     y_pred_series, y_self_pred_series = utility.predict_series(ann, X_test, sample_len, M)
 
@@ -115,8 +123,8 @@ def test_neural_net(ann, history):
 
     # utility.plot(range(sample_len), train_mg_series, label='Train series')
     utility.plot(range(sample_len), test_mg_series, label='Test series')
-    utility.plot(range(sample_len), y_pred_series, new_figure=False,
-                 label='Predicted test series (assisted with true vals of each window)')
+    utility.plot(range(sample_len), y_pred_series, new_figure=False, label='Predicted test series (assisted with true vals of each window)')
+    utility.plot(range(sample_len), orig_series, new_figure=False, label='orig_series')
     # utility.plot(range(sample_len), y_self_pred_series, new_figure=False,
     #              label='Predicted test series (rolling prediction: no true vals used)')
 
@@ -125,11 +133,21 @@ def train_neural_net(M):
     sample_len = params.train_series_length
     train_mg_series = utility.mackey_glass(sample_len=sample_len, tau=params.mg_tau)
     train_mg_series = np.array(train_mg_series[0]).reshape((sample_len))
-    X_train, y_train = prepare_dataset(train_mg_series, M, stride=1)
+
+    noise = utility.get_noise_series(params.measurement_noise, 0, params.R_var * 1.5, len(train_mg_series))
+    noisy_train_series = train_mg_series + noise
+
+    utility.plot(range(sample_len), noisy_train_series, label='noisy_train_series')
+    utility.plot(range(sample_len), train_mg_series, new_figure=False, label='train_mg_series')
+
+    # X_train, y_train = prepare_dataset(train_mg_series, M, stride=1, y_series=None)
+    X_train, y_train = prepare_dataset(noisy_train_series, M, stride=1, y_series=train_mg_series)
 
     print("Training neural network")
     ann = Sequential()
-    ann.add(Dense(math.ceil(M/2), input_dim=M, activation='tanh'))
+    # ann.add(Dense(math.ceil(M/2), input_dim=M, activation='tanh'))
+    ann.add(Dense(32, input_dim=M, activation='relu'))
+    ann.add(Dense(16, input_dim=M, activation='relu'))
     ann.add(Dense(1, activation='tanh'))    # output (x_k) - no activation because we don't want to limit the range of output
     ann.compile(optimizer='adam', loss='mse')
     history = ann.fit(X_train, y_train, epochs=params.epochs, verbose=3)
@@ -155,7 +173,9 @@ def main():
     F = np.zeros((M, M))  # Process state transition matrix (MxM)
     H = np.zeros((1, M))  # Measurement function matrix (DxM)
     H[0][M-1] = 1.0   # Measure x_k
-    Q = params.Q_var * np.eye(M)  # Process noise covariance matrix (MxM)
+    # Q = params.Q_var * np.eye(M)  # Process noise covariance matrix (MxM)
+    Q = np.zeros((M,M))  # Process noise covariance matrix (MxM)
+    Q[M-1, M-1] = params.Q_var
     R = np.array([[params.R_var]])  # Measurement noise covariance matrix (DxD)
     x_init = np.zeros((M))  # Initial values of state variables (mean) (M,)
     P_init = 0.1 * np.eye(M)  # Initial values of covariance matrix of state variables (MxM)
@@ -235,14 +255,23 @@ def main():
     # -------------------------------------------
     # Results analysis
 
+    mse_series = (x_true_series[M-1, :] - my_ukf_x[M-1, :])**2
+    normalized_mse_series = (mse_series - np.mean(mse_series)) / np.std(mse_series)
+
+    ukf_mse = mean_squared_error(x_true_series[M - 1, :], my_ukf_x[M - 1, :])
+    kf_mse = mean_squared_error(x_true_series[M - 1, :], kf_x[M - 1, :])
+    print('UKF MSE = {}, KF MSE = {}'.format(ukf_mse, kf_mse))
+
     # ukf_x = mg_series_2
 
     x_var = range(n_samples)
-    utility.plot(x_var, x_true_series[M-1, :], label='True state (x_true_series)', c='red')
-    utility.plot(x_var, my_ukf_x[M-1, :], new_figure=False, label='My UKF predicted state (my_ukf_x)', c='blue', alpha=0.7)
-    # utility.plot(x_var, ukf_x[0, :], new_figure=False, label='filterpy UKF predicted state (ukf_x)', linestyle='--', c='orange', alpha=0.7)
-    utility.plot(x_var, kf_x[M-1, :], new_figure=False, label='KF predicted state (kf_x)', c='lightseagreen', alpha=0.7)
-    plt.scatter(x_var, z_noisy_series[0, :], label='Noisy measurement (z_noisy_series)', marker='x', c='gray', s=10, alpha=0.7)
+    utility.plot(x_var, x_true_series[M-1, :], label='True state', c='red')
+    utility.plot(x_var, my_ukf_x[M-1, :], new_figure=False, label='UKF predicted state', c='blue', alpha=0.7)
+    # utility.plot(x_var, ukf_x[0, :], new_figure=False, label='filterpy UKF predicted state', linestyle='--', c='orange', alpha=0.7)
+    plt.scatter(x_var, z_noisy_series[0, :], label='Noisy measurement', marker='x', c='gray', s=10, alpha=0.7)
+    utility.plot(x_var, kf_x[M-1, :], new_figure=False, label='KF predicted state', c='lightseagreen', alpha=0.4)
+
+    utility.plot(x_var, normalized_mse_series, label='MSE (UKF vs. true)', c='blue', alpha=0.7)
 
     utility.plot(x_var, x_true_series[M-1, :], label='True state x_true_series (x_true_series)', c='red')
     # utility.plot(x_var, my_ukf_x_after_pred[0, :], new_figure=False, label='My UKF x_after_pred (no measurement update) (ukf_x_prior)')

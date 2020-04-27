@@ -1,4 +1,5 @@
 # Application of Kalman filter using a Python lib
+from pprint import pformat
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,7 +8,7 @@ import ukf
 import utility
 from keras.models import Sequential
 from keras.layers import Dense, Dropout
-import math, os, time
+import math, os, time, logging
 from sklearn.metrics import mean_squared_error
 from keras.callbacks import Callback
 
@@ -26,14 +27,16 @@ class Params:
 
 
 params = Params()
-params.epochs = 10
+params.epochs = 12
 params.train_series_length = 500
 params.test_series_length = 1000
 params.mg_tau = 30
-params.window_size = 4    # M
+params.window_size = 12    # M
 params.ukf_dt = 0.1
 params.alpha, params.beta, params.kappa = 1, 2, 1  # Worked well
 # params.alpha, params.beta, params.kappa = 0.001, 2, 1
+params.Q_var = 0.001
+params.R_var = 0.001
 
 # To make training data and related variables accessible across functions
 params.train_ukf_ann = True
@@ -115,17 +118,24 @@ def evaluate_neural_nets(sgd_ann, ukf_ann, window, use_train_series=False, train
 
 def create_neural_net(M):
     ann = Sequential()
-    ann.add(Dense(2, input_dim=M, activation='tanh'))
-    ann.add(Dense(1, ))  # output (x_k) - no activation because we don't want to limit the range of output
-    # ann.add(Dense(1, input_dim=M, activation='tanh'))  # output (x_k) - no activation because we don't want to limit the range of output
+
+    # ann.add(Dense(2, input_dim=M, activation='tanh'))
+    ann.add(Dense(1, input_dim=M, activation='tanh'))  # output (x_k) - no activation because we don't want to limit the range of output
+
+    # ann.add(Dense(6, input_dim=M, activation='tanh'))
+    # # ann.add(Dense(4, activation='tanh'))
+    # ann.add(Dense(1, activation='tanh'))  # output (x_k) - no activation because we don't want to limit the range of output
+
     ann.compile(optimizer='sgd', loss='mse')
+
+    ann.summary()
 
     return ann
 
 
 def get_weights_vector(model):
     weights = model.get_weights()
-    # print(weights)
+    # logging.info(weights)
     weights_vec = []
     for w_mat in weights:
         weights_vec.extend(w_mat.reshape(w_mat.size))
@@ -136,7 +146,7 @@ def get_weights_vector(model):
 
 def set_weights(model, weights_vec):
     prev_weights = model.get_weights()
-    # print(prev_weights)
+    # logging.info(prev_weights)
     new_weights = []
     start = 0
 
@@ -162,11 +172,15 @@ def test_weights_functions():
     for w_mat1, w_mat2 in zip(prev_weights, post_weights):
         assert np.array_equal(w_mat1, w_mat2)
 
-    print(prev_weights)
-    print(post_weights)
+    logging.info(prev_weights)
+    logging.info(post_weights)
 
 
 def main():
+    utility.setup_logging('output')
+    logging.info('Experiment parameters below')
+    logging.info('\n{}'.format(pformat(params.__dict__)))
+
     # test_weights_functions()
     # assert False
 
@@ -195,8 +209,8 @@ def main():
     num_weights = w_init.shape[0]
 
     P_init = 0.1 * np.eye(num_weights)  # Initial values of covariance matrix of state variables (MxM)
-    Q = 0.001 * np.eye(num_weights)  # Process noise covariance matrix (MxM)
-    R = np.array([[0.001]])  # Measurement noise covariance matrix (DxD)
+    Q = params.Q_var * np.eye(num_weights)  # Process noise covariance matrix (MxM)
+    R = np.array([[params.R_var]])  # Measurement noise covariance matrix (DxD)
 
     sgd_ann = create_neural_net(window)
     sgd_ann.set_weights(params.hxw_model.get_weights())  # Same starting point as the UKF_ANN
@@ -221,13 +235,13 @@ def main():
     # -------------------------------------------
     # Training loop with UKF
 
-    print("Training neural net with UKF")
+    logging.info("Training neural net with UKF")
     t0 = time.time()
     epoch = 0
 
     for i in range(num_iter):
         idx = i % len(z_true_series)
-        # print(idx)
+        # logging.info(idx)
         if idx == 0:
             if not params.train_ukf_ann:
                 break
@@ -241,7 +255,7 @@ def main():
             my_ukf_w[:, epoch] = my_ukf.x[:]
 
             epoch += 1
-            print('Epoch: {} / {}'.format(epoch, params.epochs))
+            logging.info('Epoch: {} / {}'.format(epoch, params.epochs))
 
         params.curr_idx = idx  # For use in hw() to fetch correct x_k sample
 
@@ -262,15 +276,16 @@ def main():
         # my_ukf_w[:, i] = my_ukf.x[:]
 
     time_to_train = time.time() - t0
-    print('Training complete. time_to_train = {:.2f} sec, {:.2f} min'.format(time_to_train, time_to_train / 60))
+    logging.info('Training complete. time_to_train = {:.2f} sec, {:.2f} min'.format(time_to_train, time_to_train / 60))
 
     # -------------------------------------------
     # Train SGD ANN (for comparison)
-    print("Training neural net with SGD")
+    logging.info("Training neural net with SGD")
     info_tracker = EpochInfoTracker()
     callbacks = [info_tracker]
     history = sgd_ann.fit(params.X_data, params.y_data, batch_size=1, epochs=params.epochs, verbose=3,
                           callbacks=callbacks)
+    logging.info('Training SGD complete')
 
     # -------------------------------------------
     # Results analysis
@@ -278,10 +293,14 @@ def main():
     # Visualize evolution of ANN weights
     sgd_ann_w = np.array(info_tracker.weights_history).T
 
+    logging.info('Visualize evolution of UKF ANN weights')
+
     x_var = range(params.epochs)
     utility.plot(x_var, my_ukf_w[0, :], xlabel='Epoch', title='UKF ANN weights', label='W_0', alpha=0.8)
     for j in range(1, my_ukf_w.shape[0]):
         utility.plot(x_var, my_ukf_w[j, :], new_figure=False, label='W_' + str(j), alpha=0.8)
+
+    logging.info('Visualize evolution of SGD ANN weights')
 
     x_var = range(params.epochs)
     utility.plot(x_var, sgd_ann_w[0, :], xlabel='Epoch', title='SGD ANN weights', label='W_0', alpha=0.8)
@@ -289,6 +308,7 @@ def main():
         utility.plot(x_var, sgd_ann_w[j, :], new_figure=False, label='W_' + str(j), alpha=0.8)
 
     # Visualize evolution of true y vs. hxw(x,w)
+    logging.info('Visualize evolution of true y vs. hxw(x,w)')
 
     # Visualize error curve (SGD vs UKF)
     x_var = range(params.epochs)
@@ -297,6 +317,7 @@ def main():
     utility.plot(x_var, ukf_train_mse, new_figure=False, label='UKF ANN training history (MSE)')
 
     # True test series vs. ANN pred vs, UKF pred
+    logging.info('Evaluating and visualizing neural net predictions')
     evaluate_neural_nets(sgd_ann, ukf_ann, window, use_train_series=True, train_series=X_series)
     evaluate_neural_nets(sgd_ann, ukf_ann, window)
 

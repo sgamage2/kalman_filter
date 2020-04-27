@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import collections
+import logging
 
 # A global list to keep figures (to be saved at the end of the program)
 figures_list = []
@@ -17,6 +18,18 @@ def save_all_figures(dir):
     print('All figures saved to {}'.format(dir))
 
 
+def setup_logging(output_dir):
+    log_filename = output_dir + '/' + 'run_log.log'
+
+    # noinspection PyArgumentList
+    logging.basicConfig(
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler(),
+                  logging.FileHandler(log_filename, 'w+')],
+        level=logging.INFO
+    )
+
+
 def plot(x, y, xlabel=None, y_label=None, title=None, new_figure=True, **kwargs):
     if new_figure:
         fig = plt.figure()
@@ -25,7 +38,7 @@ def plot(x, y, xlabel=None, y_label=None, title=None, new_figure=True, **kwargs)
         plt.xlabel(xlabel)
         plt.ylabel(y_label)
     plt.plot(x, y, **kwargs)
-    plt.legend()
+    plt.legend(loc='upper right')
 
 
 def mackey_glass(sample_len=1000, tau=17, seed=None, n_samples=1):
@@ -105,18 +118,22 @@ def generate_measurement_series(x_series, H, R=None, noise_type='gaussian'):
         for dim in range(D):
             mean = 0.
             var = R.diagonal()[dim]
-
-            if noise_type == 'gaussian':
-                noise = np.random.normal(mean, var, n_samples)
-            elif noise_type == 'uniform':
-                a = (3 * var) ** 0.5     # variance = a^2 / 3 for uniform~(-a, +a)
-                noise = np.random.uniform(low=-a, high=a, size=n_samples)
-            else:
-                assert False
-
+            noise = get_noise_series(noise_type, mean, var, n_samples)
             z_series[dim, :] += noise
 
     return z_series
+
+
+def get_noise_series(noise_type, mean, var, n_samples):
+    if noise_type == 'gaussian':
+        noise = np.random.normal(mean, var, n_samples)
+    elif noise_type == 'uniform':
+        a = (3 * var) ** 0.5  # variance = a^2 / 3 for uniform~(-a, +a)
+        noise = np.random.uniform(low=-a, high=a, size=n_samples)
+    else:
+        assert False
+
+    return noise
 
 
 def predict_series(ann, X_data, series_length, window):
